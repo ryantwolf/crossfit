@@ -29,8 +29,25 @@ from crossfit.utils.model_adapter import adapt_model_input
 
 
 class HFModel(Model):
-    def __init__(self, path_or_name: str, max_mem_gb: int = 16, training=False):
+    def __init__(
+        self,
+        path_or_name: str,
+        max_mem_gb: int = 16,
+        start_batch_size=256,
+        end_batch_size=2048,
+        batch_size_increment=256,
+        start_seq_len=64,
+        end_seq_len=None,
+        seq_len_increment=64,
+        training=False,
+    ):
         super().__init__(path_or_name, max_mem_gb)
+        self.start_batch_size = start_batch_size
+        self.end_batch_size = end_batch_size
+        self.batch_size_increment = batch_size_increment
+        self.start_seq_len = start_seq_len
+        self.end_seq_len = end_seq_len
+        self.seq_len_increment = seq_len_increment
 
         if not training:
             with torch.no_grad():
@@ -80,15 +97,13 @@ class HFModel(Model):
         X = []
         y = []
 
-        max_seq = self.max_seq_length()
-        for batch_size in tqdm(range(2048, 0, -256)):
-            if batch_size <= 0:
-                continue
+        if self.end_seq_len is None:
+            self.end_seq_len = self.max_seq_length()
 
-            for seq_len in range(max_seq, 0, -64):
-                if seq_len <= 0:
-                    continue
-
+        for batch_size in tqdm(range(self.start_batch_size, self.end_batch_size + 1, self.batch_size_increment)):
+            
+            out_of_memory = False
+            for seq_len in range(self.start_seq_len, self.end_seq_len, self.seq_len_increment):
                 torch.cuda.reset_peak_memory_stats()
 
                 batch = {
@@ -104,7 +119,7 @@ class HFModel(Model):
 
                 except RuntimeError as e:
                     if "out of memory" in str(e) or "out_of_memory" in str(e):
-                        pass
+                        out_of_memory = True
                     else:
                         raise e
                 finally:
@@ -113,6 +128,9 @@ class HFModel(Model):
                         del outputs
                     gc.collect()
                     torch.cuda.empty_cache()
+                
+                if out_of_memory:
+                    break
 
         self.mem = LinearRegression().fit(np.array(X), np.array(y))
         os.makedirs(cache_dir, exist_ok=True)
