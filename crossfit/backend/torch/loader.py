@@ -138,8 +138,15 @@ class SortedSeqLoader(InMemoryLoader):
                     for key, val in self.tensor_dict.items()
                     if key not in self.to_ignore
                 }
+                
                 clip_len = min(max(_tokens[start], _tokens[end - 1]), self.model.max_seq_length())
-                batch = {key: val[:, :clip_len] for key, val in batch.items()}
+                padding_side = self.model.load_tokenizer().padding_side
+                if padding_side == "right":
+                    batch = {key: val[:, :clip_len] for key, val in batch.items()}
+                elif padding_side == "left":
+                    batch = {key: val[:, -clip_len:] for key, val in batch.items()}
+                else:
+                    raise ValueError(f"Invalid padding side: {padding_side}")
 
                 for fn in self._to_map:
                     batch = adapt_model_input(fn, batch)
